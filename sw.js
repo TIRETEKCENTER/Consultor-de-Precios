@@ -38,6 +38,19 @@
  * esa ruta rápida: ahora SIEMPRE se compara el contenido completo del archivo (más lento, pero
  * 100% confiable — si el texto es distinto, se detecta sí o sí, sin depender de encabezados que
  * el servidor intermedio puede no tener actualizados todavía).
+ *
+ * TERCER bug corregido (17/09/2026, reportado por Ricardo: después de cada actualización de
+ * precios, varios vendedores seguían viendo la fecha/lista vieja hasta que borraban a mano las
+ * cookies y las imágenes en caché del navegador). Aunque {cache:'no-store'} evita que el
+ * NAVEGADOR conteste con su copia guardada, la petición seguía pidiendo la MISMA dirección de
+ * siempre — y esa red de servidores intermedios de GitHub (Fastly) puede seguir contestando con
+ * su propia copia guardada para esa dirección exacta durante un rato después de publicar un
+ * cambio, sin que nada en el navegador se entere. Ahora, solo para esta comparación interna, se
+ * le agrega a la dirección que se pide por red un parámetro que cambia siempre (la hora exacta
+ * en milisegundos) — así, para esos servidores intermedios, cada chequeo pide una dirección
+ * distinta que nunca han visto antes, y no tienen manera de contestar con una copia vieja. La
+ * dirección que ve el vendedor en la app nunca cambia; este parámetro es interno, solo para la
+ * petición de comparación por detrás.
  */
 const CACHE_VERSION = 'utl-v4';
 const APP_PAGE = 'consulta-precios-llantas.html';
@@ -98,9 +111,19 @@ self.addEventListener('fetch', function (event) {
   // GitHub en este momento, no una copia vieja que el navegador decidió reusar por su cuenta.
   var fetchOpts = esPaginaApp ? { cache: 'no-store' } : {};
 
+  // Tarea 17/09/2026 (Ricardo): además de {cache:'no-store'} (que ya evita que el NAVEGADOR
+  // conteste con su copia guardada), la dirección real que se pide por red lleva un parámetro
+  // que cambia siempre (timestamp) SOLO para esta comparación — así ningún servidor intermedio
+  // entre el navegador y GitHub (Fastly) puede contestar con una copia vieja que tenga guardada
+  // para esa dirección exacta. Ver TERCER bug corregido arriba.
+  var networkUrl = req.url;
+  if (esPaginaApp) {
+    networkUrl += (req.url.indexOf('?') === -1 ? '?' : '&') + '_utlcb=' + Date.now();
+  }
+
   event.respondWith(
     caches.match(req).then(function (cached) {
-      var networkFetch = fetch(req, fetchOpts).then(function (resp) {
+      var networkFetch = fetch(networkUrl, fetchOpts).then(function (resp) {
         if (!resp || resp.status !== 200) return resp;
 
         if (esPaginaApp && cached) {
